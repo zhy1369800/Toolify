@@ -14,4 +14,4 @@ ENV PYTHONUNBUFFERED=1 \
 	PYTHONIOENCODING=UTF-8 \
 	PYTHONDONTWRITEBYTECODE=1
 
-CMD ["python", "-u", "main.py"]
+CMD ["sh", "-c", "python generate_config.py && python -u main.py"]
