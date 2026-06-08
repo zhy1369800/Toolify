@@ -1,4 +1,15 @@
+---
+title: Toolify
+emoji: 🦀
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+app_port: 7860
+---
+
 # Toolify
+
 
 [English](README.md) | [简体中文](README_zh.md)
 
