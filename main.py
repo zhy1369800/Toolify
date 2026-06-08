@@ -2599,8 +2599,41 @@ def read_root():
     }
 
 @app.get("/v1/models")
-async def list_models(_api_key: str = Depends(verify_api_key)):
-    """List all available models"""
+async def list_models(
+    _api_key: str = Depends(verify_api_key)
+):
+    """List all available models, dynamically fetching from upstream if passthrough is enabled"""
+    
+    # If model_passthrough is active, fetch models directly from the 'openai' upstream service
+    if app_config.features.model_passthrough:
+        try:
+            openai_service = None
+            for service in app_config.upstream_services:
+                if service.name == "openai":
+                    openai_service = service.model_dump()
+                    break
+            
+            if openai_service and openai_service.get("api_key"):
+                upstream_url = f"{openai_service['base_url']}/models"
+                headers = {
+                    "Authorization": f"Bearer {openai_service['api_key']}",
+                    "Accept": "application/json"
+                }
+                
+                # Fetch models from upstream
+                logger.info(f"🔄 Fetching models from upstream: {upstream_url}")
+                response = await http_client.get(upstream_url, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    return JSONResponse(content=response.json())
+                else:
+                    logger.warning(f"⚠️ Upstream /models returned status {response.status_code}: {response.text}")
+            else:
+                logger.warning("⚠️ 'model_passthrough' is enabled but 'openai' upstream service or api_key is missing")
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch models from upstream: {e}")
+            logger.error(traceback.format_exc())
+            
+    # Fallback to local static models definition if fetching fails or model_passthrough is disabled
     visible_models = set()
     for model_name in MODEL_TO_SERVICE_MAPPING.keys():
         if ':' in model_name:
