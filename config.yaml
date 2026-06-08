@@ -30,7 +30,7 @@ features:
   log_level: "DEBUG"              # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL, or DISABLED
   convert_developer_to_system: true  # Whether to convert the developer role to the system role
   key_passthrough: false          # If true, directly forward client-provided API key to upstream instead of using configured upstream key
-  model_passthrough: false         # If true, forward all requests directly to the 'openai' upstream service, ignoring model-based routing
+  model_passthrough: true         # If true, forward all requests directly to the 'openai' upstream service, ignoring model-based routing
   
   # Custom prompt template (optional). If not provided, the default prompt will be used.
   # The default prompt includes comprehensive features:
