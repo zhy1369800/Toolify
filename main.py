@@ -1462,6 +1462,30 @@ def find_upstream(model_name: str) -> tuple[Dict[str, Any], str]:
     
     # Handle model passthrough mode
     if app_config.features.model_passthrough:
+        # Check if the model name contains a service prefix (e.g. 'deepseek/deepseek-chat')
+        if '/' in model_name:
+            parts = model_name.split('/', 1)
+            service_name, actual_model = parts[0].strip(), parts[1].strip()
+            
+            # Find the service matching the prefix
+            matched_service = None
+            for service in app_config.upstream_services:
+                if service.name == service_name:
+                    matched_service = service.model_dump()
+                    break
+            
+            if matched_service:
+                if not matched_service.get("api_key"):
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Configuration error: API key not found for service '{service_name}' in model passthrough mode."
+                    )
+                logger.info(f"🔄 Model prefix '{service_name}/' matched. Routing to service '{service_name}' with model '{actual_model}'.")
+                return matched_service, actual_model
+            else:
+                logger.warning(f"⚠️ Model prefix '{service_name}' did not match any configured service. Falling back to default 'openai' service.")
+
+        # Default fallback to 'openai' service in passthrough mode
         logger.info("🔄 Model passthrough mode is active. Forwarding to 'openai' service.")
         openai_service = None
         for service in app_config.upstream_services:
@@ -2602,38 +2626,77 @@ def read_root():
 async def list_models(
     _api_key: str = Depends(verify_api_key)
 ):
-    """List all available models, dynamically fetching from upstream if passthrough is enabled"""
+    """List all available models, dynamically fetching from all upstreams if passthrough is enabled"""
     
-    # If model_passthrough is active, fetch models directly from the 'openai' upstream service
+    # If model_passthrough is active, fetch models from all upstream services and prefix them
     if app_config.features.model_passthrough:
-        try:
-            openai_service = None
-            for service in app_config.upstream_services:
-                if service.name == "openai":
-                    openai_service = service.model_dump()
-                    break
+        all_models = []
+        
+        async def fetch_service_models(service) -> List[Dict[str, Any]]:
+            s_name = service.name
+            s_dump = service.model_dump()
             
-            if openai_service and openai_service.get("api_key"):
-                upstream_url = f"{openai_service['base_url']}/models"
-                headers = {
-                    "Authorization": f"Bearer {openai_service['api_key']}",
-                    "Accept": "application/json"
-                }
+            if not s_dump.get("api_key"):
+                return []
                 
-                # Fetch models from upstream
-                logger.info(f"🔄 Fetching models from upstream: {upstream_url}")
+            upstream_url = f"{s_dump['base_url']}/models"
+            headers = {
+                "Authorization": f"Bearer {s_dump['api_key']}",
+                "Accept": "application/json"
+            }
+            
+            try:
+                logger.info(f"🔄 Fetching models from upstream '{s_name}': {upstream_url}")
                 response = await http_client.get(upstream_url, headers=headers, timeout=10)
                 if response.status_code == 200:
-                    return JSONResponse(content=response.json())
+                    data = response.json()
+                    models_list = data.get("data", [])
+                    prefixed_models = []
+                    for model in models_list:
+                        if isinstance(model, dict) and "id" in model:
+                            new_model = model.copy()
+                            new_model["id"] = f"{s_name}/{model['id']}"
+                            new_model["owned_by"] = s_name
+                            prefixed_models.append(new_model)
+                    return prefixed_models
                 else:
-                    logger.warning(f"⚠️ Upstream /models returned status {response.status_code}: {response.text}")
-            else:
-                logger.warning("⚠️ 'model_passthrough' is enabled but 'openai' upstream service or api_key is missing")
-        except Exception as e:
-            logger.error(f"❌ Failed to fetch models from upstream: {e}")
-            logger.error(traceback.format_exc())
+                    logger.warning(f"⚠️ Upstream '{s_name}' /models returned status {response.status_code}: {response.text}")
+            except Exception as e:
+                logger.error(f"❌ Failed to fetch models from upstream '{s_name}': {e}")
             
-    # Fallback to local static models definition if fetching fails or model_passthrough is disabled
+            # Fallback to local static models list for this service if fetch fails
+            prefixed_fallback = []
+            for model_entry in service.models:
+                model_id = model_entry
+                if ':' in model_entry:
+                    parts = model_entry.split(':', 1)
+                    if len(parts) == 2:
+                        model_id = parts[0]
+                
+                prefixed_fallback.append({
+                    "id": f"{s_name}/{model_id}",
+                    "object": "model",
+                    "created": 1677610602,
+                    "owned_by": s_name,
+                    "permission": [],
+                    "root": f"{s_name}/{model_id}",
+                    "parent": None
+                })
+            return prefixed_fallback
+
+        tasks = [fetch_service_models(service) for service in app_config.upstream_services]
+        results = await asyncio.gather(*tasks)
+        
+        for res in results:
+            all_models.extend(res)
+            
+        if all_models:
+            return {
+                "object": "list",
+                "data": all_models
+            }
+            
+    # Fallback to local static models definition if fetching fails or model_passthrough is disabled (keeps original behavior)
     visible_models = set()
     for model_name in MODEL_TO_SERVICE_MAPPING.keys():
         if ':' in model_name:
