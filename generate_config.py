@@ -49,7 +49,8 @@ def main():
             services = json.loads(upstream_json)
             for service in services:
                 if "models" not in service or not service["models"]:
-                    service["models"] = ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4o-mini"]
+                    service_name = service.get("name", "default")
+                    service["models"] = [f"{service_name}-placeholder-model"]
             config["upstream_services"] = services
         except Exception as e:
             print(f"Error parsing UPSTREAM_SERVICES_JSON: {e}")
@@ -62,8 +63,8 @@ def main():
         
         models = [m.strip() for m in upstream_models_str.split(",") if m.strip()]
         if not models:
-            # Default to some standard models to pass Pydantic validation order constraint
-            models = ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4o-mini"]
+            # Default to service-name-prefixed placeholder to pass Pydantic validation constraint
+            models = [f"{upstream_name}-placeholder-model"]
         
         config["upstream_services"].append({
             "name": upstream_name,
